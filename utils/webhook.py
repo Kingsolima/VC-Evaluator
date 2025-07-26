@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict
-from main import submit, StartupInfo
+from utils.core import submit, StartupInfo
 
 router = APIRouter()
 

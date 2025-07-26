@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pydantic
+openai
+smtplib
+email-validator
+pandas
+google-auth
+google-api-python-client
+python-multipart
+reportlab
