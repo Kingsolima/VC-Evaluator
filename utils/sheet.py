@@ -1,37 +1,16 @@
-# utils/sheet.py
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
 
-# Make sure you create and download your service account key JSON file
-# and place the path to it below
-GOOGLE_CREDS_PATH = "credentials/google_creds.json"
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
-GOOGLE_SHEET_ID = ""  # <-- Add your actual Sheet ID here
-
-
-def update_google_sheet(info, memo_summary):
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS_PATH, scope)
-    client = gspread.authorize(creds)
-
-    # Open the sheet by ID
-    sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
-
-    row = [
-        datetime.utcnow().isoformat(),
-        info.name,
-        info.website,
-        info.round,
-        info.investors,
-        info.traction,
-        info.team,
-        info.product,
-        memo_summary.strip().replace("\n", " ")[:500]  # limit to 500 characters
-    ]
-
-    sheet.append_row(row)
-    return True
+def append_row_oauth(token_path, spreadsheet_id, range_name, values):
+    creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+    service = build('sheets', 'v4', credentials=creds)
+    body = {'values': [values]}
+    return service.spreadsheets().values().append(
+        spreadsheetId=spreadsheet_id,
+        range=range_name,
+        valueInputOption='RAW',
+        insertDataOption='INSERT_ROWS',
+        body=body
+    ).execute()
