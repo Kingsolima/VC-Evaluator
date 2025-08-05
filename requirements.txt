@@ -2,10 +2,16 @@ fastapi
 uvicorn
 pydantic
 openai
-smtplib
+
 email-validator
 pandas
 google-auth
 google-api-python-client
 python-multipart
 reportlab
+openai
+python-dotenv
+reportlab
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib

@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from utils.pdf import generate_pdf_from_text
 from utils.email import send_email
 from utils.sheet import update_google_sheet
+from api import openai_key
 
 # Use environment variables or set manually for now
 ASSISTANT_ID = ""  # Put your Assistant ID here

@@ -218,3 +218,8 @@ output/
 .vscode/
 .idea/
 
+.env
+credentials.json
+token.json
+output/
+*.pdf
