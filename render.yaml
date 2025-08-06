@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: vc-evaluator-api
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GMAIL_SENDER
+        sync: false
+      - key: GOOGLE_TOKEN_PATH
+        sync: false
+      - key: SHEET_ID
+        sync: false
