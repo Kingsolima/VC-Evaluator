@@ -127,3 +127,5 @@ def generate_pdf_from_text(text: str, output_path: str):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     pdf.output(output_path)
     return output_path
+
+

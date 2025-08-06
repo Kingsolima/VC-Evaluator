@@ -21,12 +21,11 @@ def send_email_oauth(
     sender: str,
     to: Union[str, List[str]],
     subject: str,
-    body_text: str,
+    mini_memo: str,
     attachment_path: Optional[str] = None,
     cc: Union[str, List[str], None] = None,
     bcc: Union[str, List[str], None] = None,
 ) -> str:
-    """Send via Gmail API; 'to', 'cc', 'bcc' accept str or list."""
     to_list  = _to_list(to)
     cc_list  = _to_list(cc)
     bcc_list = _to_list(bcc)
@@ -39,7 +38,20 @@ def send_email_oauth(
     if to_list: msg['To'] = ", ".join(to_list)
     if cc_list: msg['Cc'] = ", ".join(cc_list)
     msg['Subject'] = subject
-    msg.attach(MIMEText(body_text, 'plain'))
+
+    # Mini memo as HTML inside email
+    html = f"""\
+    <html>
+      <body>
+        <p>Hi Team,</p>
+        <p>Here’s the mini memo for <b>{subject}</b>.</p>
+        <pre>{mini_memo}</pre>
+        <p>See attached for full deal memo.</p>
+        <p>– VC Evaluator Bot</p>
+      </body>
+    </html>
+    """
+    msg.attach(MIMEText(html, 'html'))
 
     if attachment_path:
         with open(attachment_path, 'rb') as f:
