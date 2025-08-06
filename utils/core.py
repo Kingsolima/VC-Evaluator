@@ -130,19 +130,23 @@ Formatting rules:
 """
 
 def process_deal(name: str, email_to, prompt: str):
-    full = build_memo_with_assistant(prompt)
-    email_text = full  # If your assistant splits with "### FULL DEAL MEMO", we can split below
-    if "### FULL DEAL MEMO" in full:
-        email_text, _ = full.split("### FULL DEAL MEMO", 1)
+    full_output = build_memo_with_assistant(prompt)
+
+    if "### FULL DEAL MEMO" in full_output:
+        mini_memo, full_memo = full_output.split("### FULL DEAL MEMO", 1)
+    else:
+        mini_memo = full_output
+        full_memo = full_output
+
+    mini_memo = mini_memo.strip()
+    full_memo = full_memo.strip()
 
     pdf_path = f"output/{name}_DealMemo.pdf"
-    generate_pdf_from_text(full, pdf_path)
+    generate_pdf_from_text(full_memo, pdf_path)
 
-    # Send to two GPs: pass a list. Replace with your real GP emails.
     recipients: List[str] = []
     if isinstance(email_to, str) and email_to.strip():
         recipients.append(email_to.strip())
-    # Add your second GP here (or load from .env if you prefer)
     recipients.append("second.gp@yourvc.com")
 
     send_email_oauth(
@@ -150,18 +154,20 @@ def process_deal(name: str, email_to, prompt: str):
         sender=GMAIL_SENDER,
         to=recipients,
         subject=f"VC Deal Memo: {name}",
-        body_text=email_text.strip(),
+        mini_memo=mini_memo,
         attachment_path=pdf_path
     )
 
+    csv_row = [name, info_round_from_prompt(prompt), "Mini memo sent", "Full memo attached"]
     append_row_oauth(
         token_path=GOOGLE_TOKEN_PATH,
         spreadsheet_id=SPREADSHEET_ID,
         range_name=SHEET_RANGE,
-        values=[name, info_round_from_prompt(prompt), "emailed", "logged"]  # simple example
+        values=csv_row
     )
 
     return {"ok": True, "pdf": pdf_path}
+
 
 def info_round_from_prompt(prompt: str) -> str:
     # tiny helper to log round in sheet even if prompt changes
