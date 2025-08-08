@@ -1,6 +1,8 @@
 from fpdf import FPDF
 import os, re
 from fpdf.errors import FPDFException
+import markdown2
+from xhtml2pdf import pisa
 
 # --- sanitizers ---
 def sanitize_text(text: str):
@@ -91,6 +93,13 @@ def remove_emojis(text: str) -> str:
     return _EMOJI_RE.sub("", text)
 
 def generate_pdf_from_text(text: str, output_path: str):
+    # Convert markdown text to HTML
+    html = markdown2.markdown(text)
+
+    # Convert HTML to PDF and save
+    with open(output_path, "wb") as f:
+        pisa.CreatePDF(html, dest=f)
+        
     pdf = FPDF()
     # margins and page setup
     pdf.set_margins(15, 15, 15)

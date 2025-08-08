@@ -2,6 +2,7 @@ from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import time
 from openai import OpenAI
+import re
 
 from utils.config import (
     OPENAI_API_KEY, OPENAI_ASSISTANT_ID, GOOGLE_TOKEN_PATH,
@@ -40,9 +41,11 @@ def build_memo_with_assistant(prompt: str) -> str:
             return m.content[0].text.value
     return ""
 
+
 def _build_prompt(info: StartupInfo, extra: Optional[Dict[str, Any]]) -> str:
     extra = extra or {}
-    # Safely pull extras
+
+    # Pull all fields
     first_name  = extra.get("first_name", "")
     last_name   = extra.get("last_name", "")
     founder_em  = extra.get("founder_email", "")
@@ -51,83 +54,160 @@ def _build_prompt(info: StartupInfo, extra: Optional[Dict[str, Any]]) -> str:
     problem     = extra.get("problem", "")
     solution    = extra.get("solution", "")
     market      = extra.get("market", "")
-    team_detail = extra.get("team_detail", "")
+    team_detail = extra.get("team_detail", "") or info.team
     university  = extra.get("university", "")
     competition = extra.get("competition", "")
     milestones  = extra.get("milestones", "")
     vision      = extra.get("vision", "")
-    # pitch deck: Typeform will send a URL; include if you have it
-    pitch_deck  = extra.get("pitch_deck_url", "")
+    business_model = extra.get("business_model", "")
+    traction_detail = extra.get("traction_detail", "") or info.traction
+    cap_table = extra.get("cap_table", "")
+    press_links = extra.get("press_links", "")
+    round_size = extra.get("round_size", "")
+    industry = extra.get("industry", "")
 
-    # Clear, structured instructions for the Assistant
     return f"""
-You are a VC associate writing a concise email summary (6–8 sentences) and a full investor-grade deal memo.
+You are a venture capital associate writing two outputs:
 
-Start with a short **Email Summary** (for body of email).
-Then insert the delimiter line exactly:
-### FULL DEAL MEMO
-After that, write the long-form memo.
+First, a **mini deal memo email** using the real company info below. Then, a full investor memo for PDF.
 
-Use the structure below. Be specific, avoid fluff.
+---
 
-Company: {info.name}
-Website: {info.website}
-Round: {info.round}
-Lead/Investors: {info.investors}
-Traction: {info.traction}
-Team (short): {info.team}
-Product (short): {info.product}
+### MINI DEAL MEMO EMAIL
 
-Founder First Name: {first_name}
-Founder Last Name: {last_name}
-Founder Email: {founder_em}
-Incorporation: {incorp}
-Position: {position}
+Hi GP,
 
-Problem:
-{problem}
+Here is a full mini memo for {info.name}, {info.product}. They are currently raising a {info.round} round, with notable interest from {info.investors}.
 
-Solution / Product:
-{solution}
+🏷️ **Startup Overview**
+- **Name**: {info.name}
+- **Website**: {info.website}
+- **Industry**: {industry}
+- **Round Stage**: {info.round}
+- **Round Size**: {round_size}
+- **Investors**: {info.investors}
 
-Market (TAM/SAM/SOM if provided):
+📈 **Market**
 {market}
 
-Team (detail):
+🔍 **Problem**
+{problem}
+
+🛠 **Solution**
+{solution}
+
+📊 **Traction**
+{traction_detail}
+
+💵 **Business Model**
+{business_model}
+
+🧱 **Moat / Defensibility**
+{extra.get("moat", "")}
+
+👥 **Team**
 {team_detail}
 
-University:
-{university}
+🚩 **Red Flags / Risks**
+{extra.get("risks", "")}
 
-Competition / Differentiation:
-{competition}
+🧪 **Product Stage**
+{extra.get("product_stage", "")}
 
-Milestones to Next Round:
-{milestones}
+📊 **Scorecard**
+| Team: 23/25 | Market: 18/20 | Product: 9/10 | Vision: 5/5 |
+| Traction: 8/10 | Biz Model: 4/5 | Moat: 22/25 | Risk Adj: -3 | Bonus: +5 |
+Total: 91/100 → 📞 Take a Call
 
-Vision (5–10y, exit expectations):
-{vision}
+📎 Full PDF memo attached.
 
-Pitch Deck URL (if available):
-{pitch_deck}
+Best,  
+VC Evaluator GPT
 
-Formatting rules:
-- Email Summary: 6–8 sentences, neutral-professional. End with a crisp GP recommendation (e.g., "📞 Take a Call" or "⚖️ Learn More").
-- After "### FULL DEAL MEMO", include sections:
-  1) Overview
-  2) Market
-  3) Problem & Solution
-  4) Traction & Business Model
-  5) Moat & Defensibility
-  6) Team
-  7) Risks / Red Flags
-  8) Competition
-  9) Milestones & Use of Funds
-  10) Scorecard (bullet points)
-  11) GP Recommendation
-- Use short paragraphs and bullets where helpful.
-- Be decisive. Include numbers if mentioned.
+---
+
+### FULL DEAL MEMO
+
+Now write a long-form PDF memo using the same info in the style of Replit's Series C investment memo.
+
+Structure:
+- We are excited to invest...
+- Why we're excited...
+- **Synopsis**
+- **Problem**
+- **Solution**
+- **Business Model**
+- **Market Size**
+- **Go to Market Strategy**
+- **Traction**
+- **Competitors**
+- **The Team**
+- **The Cap Table**
+- **Exit Strategy**
+- **Press**
+
+Use bold headers, markdown formatting, and professional tone. Include data.
 """
+
+def extract_score(text: str) -> str:
+    match = re.search(r"Total:\s*(\d+)/100", text)
+    return match.group(1) if match else "N/A"
+
+def extract_action(text: str) -> str:
+    for phrase in ["📞 Take a Call", "⚖️ Learn More", "❌ Pass"]:
+        if phrase in text:
+            return phrase
+    return "N/A"
+
+def extract_field(label: str, text: str) -> str:
+    """
+    Grab the block of text that comes after a section header whose visible
+    label matches `label` (e.g., "Traction", "Team"), ignoring emojis and **bold**.
+    Works across multiple lines until the next header.
+    """
+    # All possible section titles that can follow
+    next_headers = (
+        r"Startup Overview|Market|Problem|Solution|Traction|Business Model|"
+        r"Moat / Defensibility|Moat|Team|Red Flags / Risks|Product Stage|Scorecard"
+    )
+
+    # ^ start of line; optional emoji; optional spaces; optional **; label; optional **; end of line
+    header = rf"^\s*(?:[🏷️📈🔍🛠📊💵🧱👥🚩🧪]\s*)?\**{re.escape(label)}\**\s*$"
+
+    # Capture everything after that header until the next header or end of text
+    pattern = rf"(?ims){header}\n+(.*?)(?=^\s*(?:[🏷️📈🔍🛠📊💵🧱👥🚩🧪]\s*)?\**(?:{next_headers})\**\s*$|\Z)"
+    m = re.search(pattern, text)
+    return m.group(1).strip() if m else "Unknown"
+
+
+def extract_revenue(traction_text: str) -> str:
+    patterns = [
+        r"\$[0-9][0-9,\.]*\s*[kKmM]?\s*(?:ARR|MRR|annual|monthly)?",  # $450K ARR, $20k MRR, $1.2M
+        r"[0-9][0-9,\.]*\s*(?:users|customers|clients)\b",            # 6 customers (proxy)
+        r"\b[0-9]+\s*(?:paying customers|subs|subscriptions)\b"
+    ]
+    for p in patterns:
+        m = re.search(p, traction_text, re.IGNORECASE)
+        if m:
+            return m.group(0)
+    return "Unknown"
+
+
+def extract_reason(full_memo: str, summary: str) -> str:
+    m = re.search(r"Why we'?re excited[:\-]?\s*(.*?)(?:\n\n|\Z)", full_memo,
+                  re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1).strip()
+
+    # Fallback: pull top 1–2 bullets from Traction or Moat
+    for sec in ("Traction", "Moat / Defensibility", "Market"):
+        block = extract_field(sec, full_memo)
+        if block and block != "Unknown":
+            lines = [ln.strip("-• ").strip() for ln in block.splitlines() if ln.strip()]
+            if lines:
+                return "; ".join(lines[:2])
+    return summary[:200]  # last-ditch: a concise summary
+
 
 def process_deal(name: str, email_to, prompt: str):
     full_output = build_memo_with_assistant(prompt)
@@ -144,21 +224,51 @@ def process_deal(name: str, email_to, prompt: str):
     pdf_path = f"output/{name}_DealMemo.pdf"
     generate_pdf_from_text(full_memo, pdf_path)
 
-    recipients: List[str] = []
-    if isinstance(email_to, str) and email_to.strip():
-        recipients.append(email_to.strip())
-    recipients.append("second.gp@yourvc.com")
-
+    # Send email
+    recipients = [email_to.strip()] if isinstance(email_to, str) and email_to.strip() else []
+    recipients.append("felicia.parker@gmail.com")
     send_email_oauth(
         token_path=GOOGLE_TOKEN_PATH,
         sender=GMAIL_SENDER,
         to=recipients,
-        subject=f"VC Deal Memo: {name}",
+        subject=f"Deal Memo – {name} ({info_round_from_prompt(prompt)})",
         mini_memo=mini_memo,
         attachment_path=pdf_path
     )
 
-    csv_row = [name, info_round_from_prompt(prompt), "Mini memo sent", "Full memo attached"]
+    # Extract data and log to Google Sheets
+
+    
+    summary_match = re.search(r"Hi GP,\s*(.*?)\n\s*🏷️", mini_memo, re.DOTALL)
+    summary = summary_match.group(1).strip() if summary_match else "No summary found"
+
+
+    traction = extract_field("Traction", mini_memo)
+    team = extract_field("Team", mini_memo)
+
+
+    revenue = extract_revenue(traction)
+
+    tags = "AI SaaS, Automation"
+    score = extract_score(mini_memo)
+    action = extract_action(mini_memo)
+    reason = extract_reason(full_memo, summary)
+
+    csv_row = [
+        name,
+        summary,
+        traction,
+        revenue,
+        team,
+        info_round_from_prompt(prompt),
+        tags,
+        score,
+        "Mini memo sent",
+        action,
+        reason
+    ]
+
+
     append_row_oauth(
         token_path=GOOGLE_TOKEN_PATH,
         spreadsheet_id=SPREADSHEET_ID,
@@ -167,6 +277,7 @@ def process_deal(name: str, email_to, prompt: str):
     )
 
     return {"ok": True, "pdf": pdf_path}
+
 
 
 def info_round_from_prompt(prompt: str) -> str:

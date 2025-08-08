@@ -40,18 +40,20 @@ def send_email_oauth(
     msg['Subject'] = subject
 
     # Mini memo as HTML inside email
-    html = f"""\
+    html = f"""
     <html>
-      <body>
-        <p>Hi Team,</p>
-        <p>Here’s the mini memo for <b>{subject}</b>.</p>
-        <pre>{mini_memo}</pre>
-        <p>See attached for full deal memo.</p>
-        <p>– VC Evaluator Bot</p>
-      </body>
+    <body style="font-family: monospace; white-space: pre-wrap;">
+        {mini_memo.replace('\n', '<br>')}
+        <br><br>
+        📎 Full PDF memo attached.<br>
+        <br>
+        Best,<br>
+        VC Evaluator GPT
+    </body>
     </html>
     """
     msg.attach(MIMEText(html, 'html'))
+
 
     if attachment_path:
         with open(attachment_path, 'rb') as f:

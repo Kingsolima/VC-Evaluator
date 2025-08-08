@@ -1,62 +1,98 @@
+# utils/webhook.py
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict, Any, List
 from utils.core import submit, StartupInfo
+from utils.field_map import FIELD_ID_MAP
 
 router = APIRouter()
 
-class TypeformSubmission(BaseModel):
-    form_response: Dict[str, Any]
+def _extract_value(answer: Dict[str, Any]) -> str:
+    """
+    Return a string value from a Typeform answer, covering common answer types.
+    """
+    # Simple primitives
+    for k in ("text", "email", "url", "number", "boolean", "phone_number"):
+        if answer.get(k) not in (None, ""):
+            return str(answer[k]).strip()
 
-def extract_answers(form_response: Dict[str, Any]) -> Dict[str, str]:
-    answers = {}
+    # Single choice
+    choice = answer.get("choice")
+    if isinstance(choice, dict) and choice.get("label"):
+        return str(choice["label"]).strip()
+
+    # 'choices' (multi) -> join labels
+    choices = answer.get("choices", {}).get("labels")
+    if isinstance(choices, list) and choices:
+        return ", ".join([str(x).strip() for x in choices])
+
+    # File upload (different shapes occur)
+    if "file_url" in answer and answer["file_url"]:
+        return str(answer["file_url"]).strip()
+    files = answer.get("files")
+    if isinstance(files, list) and files:
+        # try url under item (varies by integration)
+        for f in files:
+            url = f.get("url") or f.get("file_url")
+            if url:
+                return str(url).strip()
+
+    # Fallback: stringify whole answer (debug)
+    return str(answer)
+
+def extract_answers_by_id(form_response: Dict[str, Any]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
     for a in form_response.get("answers", []):
-        q_title = a.get("field", {}).get("title", "").strip()
-        value = (
-            a.get("text") or
-            a.get("email") or
-            a.get("number") or
-            a.get("choice", {}).get("label") or
-            str(a)
-        )
-        answers[q_title] = value
-    return answers
+        fid = (a.get("field") or {}).get("id")
+        key = FIELD_ID_MAP.get(fid)
+        if not key:
+            continue
+        out[key] = _extract_value(a)
+    return out
 
 @router.post("/typeform-webhook")
-async def typeform_webhook(submission: TypeformSubmission):
+async def typeform_webhook(payload: Dict[str, Any]):
     try:
-        answers = extract_answers(submission.form_response)
+        data = extract_answers_by_id(payload.get("form_response", {}))
 
+        # Build required object for core
         info = StartupInfo(
-            name=answers.get("Company Name ?", "NA"),
-            website=answers.get("Company website?", "NA"),
-            round=answers.get("Which series are you looking to raise?", "NA"),
-            investors=answers.get("Do you have a lead investor for this round? If so, please include their name", "NA"),
-            traction=answers.get("Traction", "NA"),
-            team=answers.get("Team", "NA"),
-            product=answers.get("Solution", "NA"),
-            email_to="gp1@example.com"  # Replace with your actual GP email or list
+            name=data.get("name", "NA"),
+            website=data.get("website", "NA"),
+            round=data.get("round", "Seed"),
+            investors=data.get("investors", "N/A"),
+            traction=data.get("traction", ""),
+            team=data.get("team", ""),
+            product=data.get("solution", ""),  # short product line
+            email_to=data.get("founder_email", "")  # you can CC your GP list in core
         )
 
-        # Extra context for AI memo
+        # Pass the rest as extra context
         extra_context = {
-            "first_name": answers.get("What's your first name?", ""),
-            "last_name": answers.get("What's your last name?", ""),
-            "founder_email": answers.get("What's your email address, Omar?", ""),
-            "incorporation": answers.get("Where is the company incorporated?", ""),
-            "position": answers.get("Position in the company?", ""),
-            "problem": answers.get("Problem", ""),
-            "solution": answers.get("Solution", ""),
-            "market": answers.get("Market", ""),
-            "team_detail": answers.get("Team", ""),
-            "university": answers.get("What university did you attend?", ""),
-            "competition": answers.get("Competition", ""),
-            "milestones": answers.get("Milestones to Next Round", ""),
-            "vision": answers.get("Vision", "")
-            # Pitch Deck would be a file URL from Typeform — separate handling
+            "first_name":     data.get("first_name", ""),
+            "last_name":      data.get("last_name", ""),
+            "founder_email":  data.get("founder_email", ""),
+            "incorporation":  data.get("incorporation", ""),
+            "position":       data.get("position", ""),
+            "problem":        data.get("problem", ""),
+            "solution":       data.get("solution", ""),
+            "market":         data.get("market", ""),
+            "team_detail":    data.get("team", ""),
+            "university":     data.get("university", ""),
+            "competition":    data.get("competition", ""),
+            "milestones":     data.get("milestones", ""),
+            "vision":         data.get("vision", ""),
+            "pitch_deck_url": data.get("pitch_deck_url", ""),
+            # optional future keys:
+            # "industry": data.get("industry", ""),
+            # "round_size": data.get("round_size", ""),
+            # "business_model": data.get("business_model", ""),
+            # "product_stage": data.get("product_stage", ""),
+            # "moat": data.get("moat", ""),
+            # "risks": data.get("risks", ""),
+            # "cap_table": data.get("cap_table", ""),
+            # "press_links": data.get("press_links", ""),
         }
 
-        # Pass the extra context into submit()
         return await submit(info, extra_context=extra_context)
 
     except Exception as e:
