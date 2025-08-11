@@ -1,8 +1,15 @@
 from fpdf import FPDF
-import os, re
 from fpdf.errors import FPDFException
-import markdown2
-from xhtml2pdf import pisa
+import os, re
+
+# Optional HTML pipeline
+_HAS_HTML = True
+try:
+    import markdown2
+    from xhtml2pdf import pisa
+except Exception:
+    _HAS_HTML = False
+
 
 # --- sanitizers ---
 def sanitize_text(text: str):
@@ -93,20 +100,30 @@ def remove_emojis(text: str) -> str:
     return _EMOJI_RE.sub("", text)
 
 def generate_pdf_from_text(text: str, output_path: str):
-    # Convert markdown text to HTML
-    html = markdown2.markdown(text)
+    # Ensure directory exists BEFORE writing anything
+    outdir = os.path.dirname(output_path) or "."
+    os.makedirs(outdir, exist_ok=True)
 
-    # Convert HTML to PDF and save
-    with open(output_path, "wb") as f:
-        pisa.CreatePDF(html, dest=f)
-        
+    # Try HTML -> PDF if libs are available
+    if _HAS_HTML:
+        try:
+            html = markdown2.markdown(text or "")
+            with open(output_path, "wb") as f:
+                pisa.CreatePDF(html, dest=f)
+            # If xhtml2pdf produced a non-empty file, we're done
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                return output_path
+        except Exception:
+            # fall through to FPDF fallback
+            pass
+
+    # Fallback: plain FPDF rendering (always works)
     pdf = FPDF()
-    # margins and page setup
     pdf.set_margins(15, 15, 15)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # Load Unicode font if available; otherwise, Arial
+    # Load Unicode font if available; otherwise Arial
     font_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "fonts", "DejaVuSans.ttf"))
     if os.path.exists(font_path):
         pdf.add_font("DejaVu", "", font_path, uni=True)
@@ -114,27 +131,17 @@ def generate_pdf_from_text(text: str, output_path: str):
     else:
         pdf.set_font("Arial", size=11)
 
-    # compute usable width
     max_w = pdf.w - pdf.l_margin - pdf.r_margin
-    line_h = 6  # a bit tighter
+    line_h = 6
 
     cleaned = sanitize_text(text or "")
-    lines = cleaned.strip().split("\n")
-
-    for raw_line in lines:
+    for raw_line in cleaned.strip().split("\n"):
         prepped = break_long_sequences(raw_line, max_len=30)
-
         try:
-            # Try normal wrapping first (fast path)
             pdf.multi_cell(0, line_h, prepped)
-        except FPDFException as e:
-            # Fallback: character-level wrapping that cannot fail
-            # Move caret to left margin before manual wrapping
+        except FPDFException:
             pdf.set_x(pdf.l_margin)
             write_wrapped_line(pdf, prepped, line_h, max_w)
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     pdf.output(output_path)
     return output_path
-
-
