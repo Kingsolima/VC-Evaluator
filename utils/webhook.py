@@ -1,53 +1,26 @@
 # utils/webhook.py
-import logging, traceback
-from fastapi import APIRouter, Request
+import logging, traceback, time, asyncio
+from fastapi import APIRouter, Request, BackgroundTasks
 from typing import Dict, Any
 from utils.field_map import FIELD_ID_MAP
 
-logger = logging.getLogger("webhook")
-logging.basicConfig(level=logging.INFO)
-
 router = APIRouter()
+SEEN: Dict[str, float] = {}
 
-@router.get("/ping")
-async def ping():
-    return {"ok": True}
-
-def _extract_value(a: Dict[str, Any]) -> str:
-    for k in ("text", "email", "url", "number", "boolean", "phone_number"):
-        v = a.get(k)
-        if v not in (None, ""):
-            return str(v).strip()
-    ch = a.get("choice")
-    if isinstance(ch, dict) and ch.get("label"):
-        return str(ch["label"]).strip()
-    labels = (a.get("choices") or {}).get("labels")
-    if isinstance(labels, list) and labels:
-        return ", ".join([str(x).strip() for x in labels])
-    if a.get("file_url"):
-        return str(a["file_url"]).strip()
-    files = a.get("files")
-    if isinstance(files, list) and files:
-        for f in files:
-            url = f.get("url") or f.get("file_url")
-            if url:
-                return str(url).strip()
-    return str(a)
-
-def extract_answers_by_id(form_response: Dict[str, Any]) -> Dict[str, str]:
-    out: Dict[str, str] = {}
-    for a in form_response.get("answers", []):
-        fid = (a.get("field") or {}).get("id")
-        key = FIELD_ID_MAP.get(fid)
-        if not key:
-            out[f"UNMAPPED::{fid}"] = _extract_value(a)
-            continue
-        out[key] = _extract_value(a)
-    return out
+def _seen(id_: str, ttl: int = 600) -> bool:
+    now = time.time()
+    for k, v in list(SEEN.items()):
+        if v < now:
+            SEEN.pop(k, None)
+    if not id_:
+        return False
+    if id_ in SEEN:
+        return True
+    SEEN[id_] = now + ttl
+    return False
 
 @router.post("/typeform-webhook")
-async def typeform_webhook(request: Request):
-    # Always return 200 with details while debugging — no 500s.
+async def typeform_webhook(request: Request, background_tasks: BackgroundTasks):
     result: Dict[str, Any] = {"ok": False}
     try:
         payload: Dict[str, Any] = await request.json()
@@ -58,23 +31,15 @@ async def typeform_webhook(request: Request):
             or form_response.get("response_id"))
 
         if rid and _seen(rid):
-            # already processed this submission
             return {"ok": True, "dedup": True}
 
         parsed = extract_answers_by_id(form_response)
-
-        result.update({
-            "ok": True,
-            "dry_run": dry_run,
-            "parsed_answers": parsed,
-        })
+        result.update({"ok": True, "dry_run": dry_run, "parsed_answers": parsed})
 
         if dry_run:
-            # Do NOT import core or call anything external.
             result["note"] = "Dry run: not calling OpenAI/Email/PDF/Sheets."
             return result
 
-        # Only import heavy deps when we actually need them
         from utils.core import submit, StartupInfo
 
         info = StartupInfo(
@@ -85,7 +50,7 @@ async def typeform_webhook(request: Request):
             traction  = parsed.get("traction", ""),
             team      = parsed.get("team", ""),
             product   = parsed.get("solution", ""),
-            email_to  = parsed.get("founder_email", "")
+            email_to  = ""  # don't route to founder
         )
 
         extra = {
@@ -105,16 +70,11 @@ async def typeform_webhook(request: Request):
             "pitch_deck_url": parsed.get("pitch_deck_url",""),
         }
 
-        result["startup_info"] = info.dict()
-        result["extra_context"] = extra
-
-        # Call the full pipeline
-        submit_result = await submit(info, extra_context=extra)
-        result["submit_result"] = submit_result
-        return result
+        # queue the heavy work; return 200 immediately so no retries
+        background_tasks.add_task(asyncio.create_task, submit(info, extra_context=extra))
+        return {"ok": True, "queued": True, "rid": rid}
 
     except Exception as e:
-        # Return the error in the body (HTTP 200) so you can see it without paid logs
         result["error"] = str(e)
         result["trace"] = traceback.format_exc()
-        return result  # 200 with error details
+        return result
