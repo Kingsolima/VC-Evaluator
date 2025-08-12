@@ -5,7 +5,7 @@ SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
 ]
 
-flow = InstalledAppFlow.from_client_secrets_file('credentials_desktop.json', SCOPES)
+flow = InstalledAppFlow.from_client_secrets_file('credentials_desktop2.json', SCOPES)
 # Fixed port helps on Windows; also forces refresh_token:
 creds = flow.run_local_server(host='localhost', port=8080, access_type='offline', prompt='consent')
 
