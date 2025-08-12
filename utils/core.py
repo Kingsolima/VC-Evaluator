@@ -135,11 +135,14 @@ Rules:
   - 70–79 → "LEARN_MORE"
   - 50-70 → "PASS"
 
-After the email text, output a single JSON block **exactly** like this, fenced in triple backticks:
+After the email text, output ONE json code block and nothing else for scoring.
+Do not print any markdown/bullets/tables for the scorecard.
+
+Allowed verdicts: TAKE_CALL, LEARN_MORE, PASS.
 
 ```json
 {{"scores": {{"team": 0, "market": 0, "product": 0, "vision": 0, "traction": 0, "business_model": 0, "moat": 0, "risk_adj": 0, "bonus": 0}}, "total": 0, "verdict": "LEARN_MORE"}}
-📎 Full PDF memo attached.
+
 
 Best,  
 VC Evaluator GPT
@@ -286,6 +289,76 @@ def extract_summary(text: str) -> str:
     return ""
 
 
+#2) **Add a bullet-parser fallback + calibration** (so even if it goes markdown again, you still get a sane score)
+
+
+def parse_scorecard_bullets(text: str):
+    # e.g., "**Team**: 21/25" or "**Risk Adjustment**: -3"
+    def grab(label, default=None, denom=None, signed=False):
+        if denom:
+            m = re.search(rf"\*\*{re.escape(label)}\*\*:\s*(-?\d+)\s*/\s*{denom}", text, re.I)
+            return int(m.group(1)) if m else default
+        else:
+            rgx = rf"\*\*{re.escape(label)}\*\*:\s*([+-]?\d+)"
+            m = re.search(rgx, text, re.I)
+            return int(m.group(1)) if m else default
+
+    scores = {
+        "team":           grab("Team", 0, 25),
+        "market":         grab("Market", 0, 20),
+        "product":        grab("Product", 0, 10),
+        "vision":         grab("Vision", 0, 5),
+        "traction":       grab("Traction", 0, 10),
+        "business_model": grab("Business Model", 0, 5),
+        "moat":           grab("Moat", 0, 25),
+        "risk_adj":       grab("Risk Adjustment", 0, None),
+        "bonus":          grab("Bonus", 0, None),
+    }
+    total = sum([
+        scores["team"], scores["market"], scores["product"], scores["vision"],
+        scores["traction"], scores["business_model"], scores["moat"],
+        scores["risk_adj"], scores["bonus"]
+    ])
+    # fallback verdict from total
+    verdict = "TAKE_CALL" if total >= 82 else "LEARN_MORE" if total >= 70 else "PASS"
+    return {"scores": scores, "total": total, "verdict": verdict}
+
+def parse_score_any(mini: str, full: str):
+    sc = parse_scorecard_json(mini) or parse_scorecard_json(full)
+    if sc: return sc
+    # try bullets in mini, then full
+    m = parse_scorecard_bullets(mini)
+    if m and isinstance(m.get("total"), int): return m
+    return parse_scorecard_bullets(full)
+
+def _parse_mrr(text: str) -> int | None:
+    m = re.search(r"\$?\s*([\d.,]+)\s*([kKmM])?\s*MRR", text or "", re.I)
+    if not m: return None
+    n = float(m.group(1).replace(",", ""))
+    unit = (m.group(2) or "").lower()
+    if unit == "k": n *= 1_000
+    if unit == "m": n *= 1_000_000
+    return int(n)
+
+def calibrate_scorecard(mini_memo: str, sc: dict) -> dict:
+    s = (sc.get("scores") or {}).copy()
+    # traction floor for Seed $100k+ MRR
+    mrr = _parse_mrr(extract_field("Traction", mini_memo))
+    if isinstance(mrr, int) and mrr >= 100_000:
+        s["traction"] = max(s.get("traction", 0), 9)
+    # clamp typical risk
+    s["risk_adj"] = max(s.get("risk_adj", 0), -3)
+    # moat nudge if defensibility keywords present
+    moat_src = (extract_field("Moat / Defensibility", mini_memo) or full_memo or "").lower()
+    if any(k in moat_src for k in ["government api", "gov api", "compliance", "biometric", "white-label", "white label", "proprietary data", "dpa", "soc2", "iso 27001"]):
+        s["moat"] = max(s.get("moat", 0), 20)
+    total = (s.get("team",0)+s.get("market",0)+s.get("product",0)+s.get("vision",0)+
+             s.get("traction",0)+s.get("business_model",0)+s.get("moat",0)+
+             s.get("risk_adj",0)+s.get("bonus",0))
+    verdict = "TAKE_CALL" if total >= 80 else "LEARN_MORE" if total >= 70 else "PASS"
+    sc["scores"], sc["total"], sc["verdict"] = s, int(round(total)), verdict
+    return sc
+
 
 
 def process_deal(name: str, email_to, prompt: str):
@@ -336,9 +409,12 @@ def process_deal(name: str, email_to, prompt: str):
     revenue = extract_revenue(traction)
 
     tags = "AI SaaS, Automation"
-    scorecard = extract_score(mini_memo, full_memo) or {}
-    total = scorecard.get("total")
-    verdict = scorecard.get("verdict", "")
+    scorecard = parse_score_any(mini_memo, full_memo) or {"scores": {}}
+    scorecard = calibrate_scorecard(mini_memo, scorecard)
+
+    total  = str(scorecard["total"])
+    verdict = {"TAKE_CALL":"📞 Take a Call","LEARN_MORE":"⚖️ Learn More","PASS":"❌ Pass"}[scorecard["verdict"]]
+
     score = str(int(round(total))) if isinstance(total, (int, float)) else "N/A"
 
     # Keep your existing extract_action as fallback, but prefer JSON:
