@@ -3,6 +3,14 @@ from typing import Dict, Any, List, Optional
 import time
 from openai import OpenAI
 import re
+from utils.config import (
+    OPENAI_API_KEY, OPENAI_ASSISTANT_ID, GOOGLE_TOKEN_PATH,
+    GMAIL_SENDER, SPREADSHEET_ID, SHEET_RANGE,
+    # optional: read recipients from .env (comma-separated)
+    # e.g., GP_RECIPIENTS=gp1@vc.com, gp2@vc.com
+    GP_RECIPIENTS,
+)
+
 
 from utils.config import (
     OPENAI_API_KEY, OPENAI_ASSISTANT_ID, GOOGLE_TOKEN_PATH,
@@ -270,8 +278,10 @@ def process_deal(name: str, email_to, prompt: str):
     generate_pdf_from_text(full_memo, pdf_path)
 
     # Send email
-    recipients = [email_to.strip()] if isinstance(email_to, str) and email_to.strip() else []
-    recipients.append("felicia.parker@gmail.com")
+    # Prefer explicit GP recipients from env; do NOT email founder by default
+    gp_list = [e.strip() for e in (GP_RECIPIENTS or "").split(",") if e.strip()]
+    recipients = gp_list  # if empty, nothing is sent; that’s safer than emailing founder
+
     send_email_oauth(
         token_path=GOOGLE_TOKEN_PATH,
         sender=GMAIL_SENDER,
