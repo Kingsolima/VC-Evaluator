@@ -223,3 +223,9 @@ credentials.json
 token.json
 output/
 *.pdf
+credentials_desktop2.json
+
+credentials*.json
+token.json
+.env
+
