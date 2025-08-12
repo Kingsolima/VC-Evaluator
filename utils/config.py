@@ -11,7 +11,7 @@ GMAIL_SENDER        = os.getenv('GMAIL_SENDER', '')
 SPREADSHEET_ID      = os.getenv('SPREADSHEET_ID', '')
 SHEET_RANGE         = os.getenv('SHEET_RANGE', 'Sheet1!A1')
 
-GP_RECIPIENTS = os.getenv('GP_RECIPIENTS', '')  # e.g. "solimama@gmail.com,felicia.parker@gmail.com"
+GP_RECIPIENTS = os.getenv('GP_RECIPIENTS', '') 
 
 import json, tempfile
 

@@ -12,12 +12,6 @@ from utils.config import (
 )
 
 
-from utils.config import (
-    OPENAI_API_KEY, OPENAI_ASSISTANT_ID, GOOGLE_TOKEN_PATH,
-    GMAIL_SENDER, SPREADSHEET_ID, SHEET_RANGE,
-    # optional: read recipients from .env (comma-separated)
-    # e.g., GP_RECIPIENTS=gp1@vc.com, gp2@vc.com
-)
 from utils.pdf import generate_pdf_from_text
 from utils.email import send_email_oauth
 from utils.sheet import append_row_oauth
@@ -140,14 +134,11 @@ Rules:
   - total ≥ 85 → "TAKE_CALL"
   - 70–84 → "LEARN_MORE"
   - 50-70 → "PASS"
-  - < 50 → "HARD PASS"
 
 After the email text, output a single JSON block **exactly** like this, fenced in triple backticks:
 
 ```json
-{"scores":{"team":0,"market":0,"product":0,"vision":0,"traction":0,"business_model":0,"moat":0,"risk_adj":0,"bonus":0},"total":0,"verdict":"TAKE_CALL|LEARN_MORE|PASS"}
-
-
+{{"scores": {{"team": 0, "market": 0, "product": 0, "vision": 0, "traction": 0, "business_model": 0, "moat": 0, "risk_adj": 0, "bonus": 0}}, "total": 0, "verdict": "LEARN_MORE"}}
 📎 Full PDF memo attached.
 
 Best,  
@@ -203,9 +194,14 @@ def extract_score(text: str) -> str:
 def extract_action(text: str) -> str:
     sc = parse_scorecard_json(text)
     if sc and isinstance(sc.get("verdict"), str):
-        v = sc["verdict"].upper()
-        return {"TAKE_CALL": "📞 Take a Call", "LEARN_MORE": "⚖️ Learn More", "PASS": "❌ Pass"}.get(v, "N/A")
-    # legacy fallback
+        v = sc["verdict"].upper().replace(" ", "_")
+        mapping = {
+            "TAKE_CALL": "📞 Take a Call",
+            "LEARN_MORE": "⚖️ Learn More",
+            "PASS": "❌ Pass",
+            "HARD_PASS": "❌ Pass",  # in case the model outputs it
+        }
+        return mapping.get(v, "N/A")
     for phrase in ["📞 Take a Call", "⚖️ Learn More", "❌ Pass"]:
         if phrase in text:
             return phrase
