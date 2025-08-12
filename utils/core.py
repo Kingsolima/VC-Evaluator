@@ -114,10 +114,31 @@ Here is a full mini memo for {info.name}, {info.product}. They are currently rai
 🧪 **Product Stage**
 {extra.get("product_stage", "")}
 
-📊 **Scorecard**
-| Team: 23/25 | Market: 18/20 | Product: 9/10 | Vision: 5/5 |
-| Traction: 8/10 | Biz Model: 4/5 | Moat: 22/25 | Risk Adj: -3 | Bonus: +5 |
-Total: 91/100 → 📞 Take a Call
+📊 📊 **Scorecard (computed)**
+Compute scores using this rubric (max points):
+- Team 0–25
+- Market 0–20
+- Product 0–10
+- Vision 0–5
+- Traction 0–10
+- Business Model 0–5
+- Moat 0–25
+- Risk Adjustment −10…0 (subtract)
+- Bonus 0…+5
+
+Rules:
+- Total = sum(all above) bounded to 0…100.
+- Verdict mapping:
+  - total ≥ 85 → "TAKE_CALL"
+  - 70–84 → "LEARN_MORE"
+  - 50-70 → "PASS"
+  - < 50 → "HARD PASS"
+
+After the email text, output a single JSON block **exactly** like this, fenced in triple backticks:
+
+```json
+{"scores":{"team":0,"market":0,"product":0,"vision":0,"traction":0,"business_model":0,"moat":0,"risk_adj":0,"bonus":0},"total":0,"verdict":"TAKE_CALL|LEARN_MORE|PASS"}
+
 
 📎 Full PDF memo attached.
 
@@ -149,15 +170,39 @@ Structure:
 Use bold headers, markdown formatting, and professional tone. Include data.
 """
 
+def parse_scorecard_json(text: str) -> Optional[Dict[str, Any]]:
+    # look for the last fenced JSON block
+    m = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
+    if not m:
+        # fallback: any fenced block
+        m = re.search(r"```\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if not m:
+        return None
+    import json
+    try:
+        return json.loads(m.group(1))
+    except Exception:
+        return None
+
 def extract_score(text: str) -> str:
+    sc = parse_scorecard_json(text)
+    if sc and isinstance(sc.get("total"), (int, float)):
+        return str(int(round(sc["total"])))
+    # legacy fallback if model didn’t emit JSON
     match = re.search(r"Total:\s*(\d+)/100", text)
     return match.group(1) if match else "N/A"
 
 def extract_action(text: str) -> str:
+    sc = parse_scorecard_json(text)
+    if sc and isinstance(sc.get("verdict"), str):
+        v = sc["verdict"].upper()
+        return {"TAKE_CALL": "📞 Take a Call", "LEARN_MORE": "⚖️ Learn More", "PASS": "❌ Pass"}.get(v, "N/A")
+    # legacy fallback
     for phrase in ["📞 Take a Call", "⚖️ Learn More", "❌ Pass"]:
         if phrase in text:
             return phrase
     return "N/A"
+
 
 def extract_field(label: str, text: str) -> str:
     """
