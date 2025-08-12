@@ -136,7 +136,9 @@ Rules:
   - 50-70 → "PASS"
 
 After the email text, output ONE json code block and nothing else for scoring.
-Do not print any markdown/bullets/tables for the scorecard.
+
+Do not include any markdown/table/bullet scorecard in the email body.
+After the email text, output ONE json code block ONLY for scoring.
 
 Allowed verdicts: TAKE_CALL, LEARN_MORE, PASS.
 
@@ -276,10 +278,8 @@ def extract_reason(full_memo: str, summary: str) -> str:
 
 def extract_summary(text: str) -> str:
     # Capture between "Hi GP," and the first header (with or without emoji/bold)
-    headers = (
-        r"Startup Overview|Market|Problem|Solution|Traction|Business Model|"
-        r"Moat / Defensibility|Moat|Team|Red Flags|Product Stage|Scorecard|FULL DEAL MEMO"
-    )
+    headers = (r"Startup Overview|Market|Problem|Solution|Traction|Business Model|"
+               r"Moat / Defensibility|Moat|Team|Red Flags|Product Stage|Scorecard|FULL DEAL MEMO")
     pat = rf"(?is)Hi GP,?\s*(.*?)(?=\n\s*(?:[^\w\s]?\s*)?\**(?:{headers})\**\b)"
     m = re.search(pat, text, re.IGNORECASE | re.DOTALL)
     if m:
@@ -359,6 +359,30 @@ def calibrate_scorecard(mini_memo: str, sc: dict) -> dict:
     sc["scores"], sc["total"], sc["verdict"] = s, int(round(total)), verdict
     return sc
 
+def build_decision_rationale(mini: str, sc: dict) -> str:
+    s = sc.get("scores", {})
+    reasons = []
+    # negative drivers first
+    if s.get("moat", 25) < 15:
+        reasons.append(f"Moat is weak ({s.get('moat',0)}/25): limited defensibility articulated.")
+    if s.get("risk_adj", 0) <= -3:
+        reasons.append(f"Risk −{abs(s.get('risk_adj',0))}: regulated workflow / compliance exposure needs proof (DPAs/SOC2 path).")
+    if s.get("business_model", 5) < 4:
+        reasons.append(f"Business model unclear ({s.get('business_model',0)}/5): pricing/expansion motion needs detail.")
+    # positive drivers
+    tr_txt = extract_field("Traction", mini)
+    mrr = _parse_mrr(tr_txt or "")
+    if isinstance(mrr, int) and mrr >= 100_000:
+        reasons.append(f"Strong traction (≈${mrr:,} MRR) supports demand.")
+    if s.get("team",0) >= 20:
+        reasons.append(f"Team strength ({s.get('team',0)}/25): credible background for execution.")
+    # assemble
+    verdict = sc.get("verdict","LEARN_MORE")
+    total = sc.get("total","N/A")
+    head = f"**Score: {total}/100 → Recommendation: " + ({"TAKE_CALL":"📞 Take a Call","LEARN_MORE":"⚖️ Learn More","PASS":"❌ Pass"}[verdict]) + "**"
+    body = "• " + "\n• ".join(reasons[:4]) if reasons else "• Results driven by current subscores across moat, traction, and risk."
+    return head + "\n\n**Why:**\n" + body
+
 
 
 def process_deal(name: str, email_to, prompt: str):
@@ -376,10 +400,35 @@ def process_deal(name: str, email_to, prompt: str):
     pdf_path = f"output/{name}_DealMemo.pdf"
     generate_pdf_from_text(full_memo, pdf_path)
 
+        # ---------- build combined email body ----------
+    # 1) intro paragraph (merge the “two emails”)
+    intro_summary = extract_summary(mini_memo)
+    if not intro_summary:
+        # safe fallback if model didn’t provide a good summary
+        intro_summary = f"Here is a mini memo for {name}. They are raising a {info_round_from_prompt(prompt)} round, with interest from {extract_field('Startup Overview', mini_memo) or 'notable investors'}."
+
+    intro = f"Hi GP,\n\n{intro_summary}\n\nFull PDF memo attached."
+
+    # 2) keep the model’s sections but strip greeting/header duplication
+    mini_body = strip_greeting(mini_memo)
+    # drop any 'Full PDF memo attached' lines from the model body to avoid duplicates
+    mini_body = re.sub(r"(?i)^.*Full (PDF )?memo attached.*\n?", "", mini_body, flags=re.M)
+
+    # 3) scoring + rationale (deterministic)
+    sc = parse_score_any(mini_memo, full_memo) or {"scores": {}}
+    sc = calibrate_scorecard(mini_memo, sc)
+    score_block = build_decision_rationale(mini_memo, sc)
+
+    combined_email = "### EMAIL\n\n" + intro + "\n\n" + mini_body + "\n\n" + score_block + "\n"
+
+    # ---------- send one email ----------
+    gp_list = [e.strip() for e in (GP_RECIPIENTS or "").split(",") if e.strip()]
+    if not gp_list:
+        raise RuntimeError("No GP_RECIPIENTS set; refusing to send.")
+    recipients = gp_list
     # Send email
     # Prefer explicit GP recipients from env; do NOT email founder by default
-    gp_list = [e.strip() for e in (GP_RECIPIENTS or "").split(",") if e.strip()]
-    recipients = gp_list  # if empty, nothing is sent; that’s safer than emailing founder
+    # if empty, nothing is sent; that’s safer than emailing founder
 
     send_email_oauth(
         token_path=GOOGLE_TOKEN_PATH,

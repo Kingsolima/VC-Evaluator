@@ -53,6 +53,14 @@ async def typeform_webhook(request: Request):
         payload: Dict[str, Any] = await request.json()
         dry_run = request.query_params.get("dry_run") in ("1", "true", "True")
         form_response = payload.get("form_response") or {}
+        rid = (payload.get("event_id")
+            or form_response.get("token")
+            or form_response.get("response_id"))
+
+        if rid and _seen(rid):
+            # already processed this submission
+            return {"ok": True, "dedup": True}
+
         parsed = extract_answers_by_id(form_response)
 
         result.update({
