@@ -125,14 +125,14 @@ Compute scores using this rubric (max points):
 - Traction 0–10
 - Business Model 0–5
 - Moat 0–25
-- Risk Adjustment −10…0 (subtract)
+- Risk Adjustment 0 to -10 (if their isnt much risk dont adjust much, like 10 is for extreme cases)
 - Bonus 0…+5
 
 Rules:
 - Total = sum(all above) bounded to 0…100.
 - Verdict mapping:
-  - total ≥ 85 → "TAKE_CALL"
-  - 70–84 → "LEARN_MORE"
+  - total ≥ 80 → "TAKE_CALL"
+  - 70–79 → "LEARN_MORE"
   - 50-70 → "PASS"
 
 After the email text, output a single JSON block **exactly** like this, fenced in triple backticks:
@@ -183,13 +183,27 @@ def parse_scorecard_json(text: str) -> Optional[Dict[str, Any]]:
     except Exception:
         return None
 
-def extract_score(text: str) -> str:
-    sc = parse_scorecard_json(text)
-    if sc and isinstance(sc.get("total"), (int, float)):
-        return str(int(round(sc["total"])))
-    # legacy fallback if model didn’t emit JSON
-    match = re.search(r"Total:\s*(\d+)/100", text)
-    return match.group(1) if match else "N/A"
+def extract_score(mini_text: str, full_text: str | None = None) -> str:
+    # try JSON in mini, then full
+    sc = parse_scorecard_json(mini_text)
+    if not sc and full_text:
+        sc = parse_scorecard_json(full_text)
+
+    if sc is not None:
+        total = sc.get("total")
+        try:
+            total = float(str(total).strip())
+        except (TypeError, ValueError):
+            total = None
+        if total is not None:
+            total = max(0.0, min(100.0, total))  # clamp
+            return str(int(round(total)))
+
+    # fallback to prose pattern: "Total: 82" or "Total: 82/100"
+    pat = re.compile(r"Total:\s*(\d+)(?:\s*/\s*100)?", re.IGNORECASE)
+    m = pat.search(mini_text) or (pat.search(full_text) if full_text else None)
+    return m.group(1) if m else "N/A"
+
 
 def extract_action(text: str) -> str:
     sc = parse_scorecard_json(text)
@@ -257,6 +271,22 @@ def extract_reason(full_memo: str, summary: str) -> str:
                 return "; ".join(lines[:2])
     return summary[:200]  # last-ditch: a concise summary
 
+def extract_summary(text: str) -> str:
+    # Capture between "Hi GP," and the first header (with or without emoji/bold)
+    headers = (
+        r"Startup Overview|Market|Problem|Solution|Traction|Business Model|"
+        r"Moat / Defensibility|Moat|Team|Red Flags|Product Stage|Scorecard|FULL DEAL MEMO"
+    )
+    pat = rf"(?is)Hi GP,?\s*(.*?)(?=\n\s*(?:[^\w\s]?\s*)?\**(?:{headers})\**\b)"
+    m = re.search(pat, text, re.IGNORECASE | re.DOTALL)
+    if m:
+        s = m.group(1).strip()
+        if s:
+            return s
+    return ""
+
+
+
 
 def process_deal(name: str, email_to, prompt: str):
     full_output = build_memo_with_assistant(prompt)
@@ -290,8 +320,13 @@ def process_deal(name: str, email_to, prompt: str):
     # Extract data and log to Google Sheets
 
     
-    summary_match = re.search(r"Hi GP,\s*(.*?)\n\s*🏷️", mini_memo, re.DOTALL)
-    summary = summary_match.group(1).strip() if summary_match else "No summary found"
+    summary = extract_summary(mini_memo)
+    if not summary:
+        # Build a sane one-liner fallback from structured fields
+        summary = f"{name} is building {extract_field('Solution', mini_memo) or 'an AI product'}; " \
+                f"stage: {info_round_from_prompt(prompt)}; " \
+                f"traction: {extract_field('Traction', mini_memo)}; " \
+                f"backed by {extract_field('Startup Overview', mini_memo) or 'notable investors'}."
 
 
     traction = extract_field("Traction", mini_memo)
@@ -301,9 +336,18 @@ def process_deal(name: str, email_to, prompt: str):
     revenue = extract_revenue(traction)
 
     tags = "AI SaaS, Automation"
-    score = extract_score(mini_memo)
-    action = extract_action(mini_memo)
-    reason = extract_reason(full_memo, summary)
+    scorecard = extract_score(mini_memo, full_memo) or {}
+    total = scorecard.get("total")
+    verdict = scorecard.get("verdict", "")
+    score = str(int(round(total))) if isinstance(total, (int, float)) else "N/A"
+
+    # Keep your existing extract_action as fallback, but prefer JSON:
+    if isinstance(verdict, str) and verdict:
+        v = verdict.upper().replace(" ", "_")
+        action = {"TAKE_CALL":"📞 Take a Call","LEARN_MORE":"⚖️ Learn More","PASS":"❌ Pass"}.get(v, "⚖️ Learn More")
+    else:
+        action = extract_action(mini_memo)  # legacy fallback    action = extract_action(mini_memo)
+        reason = extract_reason(full_memo, summary)
 
     csv_row = [
         name,
