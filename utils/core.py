@@ -349,7 +349,7 @@ def calibrate_scorecard(mini_memo: str, sc: dict) -> dict:
     # clamp typical risk
     s["risk_adj"] = max(s.get("risk_adj", 0), -3)
     # moat nudge if defensibility keywords present
-    moat_src = (extract_field("Moat / Defensibility", mini_memo) or full_memo or "").lower()
+    moat_src = (extract_field("Moat / Defensibility", mini_memo) or "").lower()
     if any(k in moat_src for k in ["government api", "gov api", "compliance", "biometric", "white-label", "white label", "proprietary data", "dpa", "soc2", "iso 27001"]):
         s["moat"] = max(s.get("moat", 0), 20)
     total = (s.get("team",0)+s.get("market",0)+s.get("product",0)+s.get("vision",0)+
@@ -383,7 +383,9 @@ def build_decision_rationale(mini: str, sc: dict) -> str:
     body = "• " + "\n• ".join(reasons[:4]) if reasons else "• Results driven by current subscores across moat, traction, and risk."
     return head + "\n\n**Why:**\n" + body
 
-
+def strip_greeting(mini: str) -> str:
+    m = re.search(r"(?is)\A.*?Hi GP,?\s*", mini)
+    return mini[m.end():].lstrip() if m else mini.strip()
 
 def process_deal(name: str, email_to, prompt: str):
     full_output = build_memo_with_assistant(prompt)
@@ -430,49 +432,53 @@ def process_deal(name: str, email_to, prompt: str):
     # Prefer explicit GP recipients from env; do NOT email founder by default
     # if empty, nothing is sent; that’s safer than emailing founder
 
-    send_email_oauth(
-        token_path=GOOGLE_TOKEN_PATH,
-        sender=GMAIL_SENDER,
-        to=recipients,
-        subject=f"Deal Memo – {name} ({info_round_from_prompt(prompt)})",
-        mini_memo=mini_memo,
-        attachment_path=pdf_path
+    send_email_oauth (
+    token_path=GOOGLE_TOKEN_PATH,
+    sender=GMAIL_SENDER,
+    to=recipients,
+    subject=f"Deal Memo – {name} ({info_round_from_prompt(prompt)})",
+    mini_memo=combined_email,   # ← was mini_memo
+    attachment_path=pdf_path
     )
 
-    # Extract data and log to Google Sheets
 
-    
+        # Extract data and log to Google Sheets
+
+    # Robust intro summary
     summary = extract_summary(mini_memo)
     if not summary:
-        # Build a sane one-liner fallback from structured fields
-        summary = f"{name} is building {extract_field('Solution', mini_memo) or 'an AI product'}; " \
-                f"stage: {info_round_from_prompt(prompt)}; " \
-                f"traction: {extract_field('Traction', mini_memo)}; " \
-                f"backed by {extract_field('Startup Overview', mini_memo) or 'notable investors'}."
-
+        summary = (
+            f"{name} is building {extract_field('Solution', mini_memo) or 'an AI product'}; "
+            f"stage: {info_round_from_prompt(prompt)}; "
+            f"traction: {extract_field('Traction', mini_memo)}; "
+            f"backed by {extract_field('Startup Overview', mini_memo) or 'notable investors'}."
+        )
 
     traction = extract_field("Traction", mini_memo)
-    team = extract_field("Team", mini_memo)
+    team     = extract_field("Team", mini_memo)
+    revenue  = extract_revenue(traction)
+    tags     = "AI SaaS, Automation"
 
-
-    revenue = extract_revenue(traction)
-
-    tags = "AI SaaS, Automation"
+    # Parse scorecard from mini or full, then calibrate
     scorecard = parse_score_any(mini_memo, full_memo) or {"scores": {}}
     scorecard = calibrate_scorecard(mini_memo, scorecard)
 
-    total  = str(scorecard["total"])
-    verdict = {"TAKE_CALL":"📞 Take a Call","LEARN_MORE":"⚖️ Learn More","PASS":"❌ Pass"}[scorecard["verdict"]]
+    # Numeric score for Sheets
+    total_int = int(scorecard.get("total", 0))
+    score     = str(total_int)
 
-    score = str(int(round(total))) if isinstance(total, (int, float)) else "N/A"
+    # Human-facing action label from verdict code
+    verdict_code = scorecard.get("verdict", "LEARN_MORE")
+    action_map   = {"TAKE_CALL":"📞 Take a Call", "LEARN_MORE":"⚖️ Learn More", "PASS":"❌ Pass"}
+    action       = action_map.get(verdict_code, "⚖️ Learn More")
 
-    # Keep your existing extract_action as fallback, but prefer JSON:
-    if isinstance(verdict, str) and verdict:
-        v = verdict.upper().replace(" ", "_")
-        action = {"TAKE_CALL":"📞 Take a Call","LEARN_MORE":"⚖️ Learn More","PASS":"❌ Pass"}.get(v, "⚖️ Learn More")
-    else:
-        action = extract_action(mini_memo)  # legacy fallback    action = extract_action(mini_memo)
-        reason = extract_reason(full_memo, summary)
+    # Concise rationale for the Sheet (use the same logic as email, but flatten)
+    rationale_md = build_decision_rationale(mini_memo, scorecard)  # markdown block
+    # Strip headings/bullets and condense to one line
+    rationale_txt = re.sub(r"\*\*", "", rationale_md)                 # remove bold markers
+    rationale_txt = rationale_txt.split("Why:", 1)[-1].strip()         # keep the reasons
+    rationale_txt = " ".join(x.strip("• ").strip() for x in rationale_txt.splitlines() if x.strip())
+    reason        = rationale_txt[:500] or "Scores driven by moat, traction, and risk profile."
 
     csv_row = [
         name,
@@ -485,16 +491,16 @@ def process_deal(name: str, email_to, prompt: str):
         score,
         "Mini memo sent",
         action,
-        reason
+        reason,
     ]
-
 
     append_row_oauth(
         token_path=GOOGLE_TOKEN_PATH,
         spreadsheet_id=SPREADSHEET_ID,
         range_name=SHEET_RANGE,
-        values=csv_row
+        values=csv_row,
     )
+
 
     return {"ok": True, "pdf": pdf_path}
 
