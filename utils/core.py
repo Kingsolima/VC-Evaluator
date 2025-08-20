@@ -227,27 +227,6 @@ def extract_action(text: str) -> str:
     return "N/A"
 
 
-def extract_field(label: str, text: str) -> str:
-    """
-    Grab the block of text that comes after a section header whose visible
-    label matches `label` (e.g., "Traction", "Team"), ignoring emojis and **bold**.
-    Works across multiple lines until the next header.
-    """
-    # All possible section titles that can follow
-    next_headers = (
-        r"Startup Overview|Market|Problem|Solution|Traction|Business Model|"
-        r"Moat / Defensibility|Moat|Team|Red Flags / Risks|Product Stage|Scorecard"
-    )
-
-    # ^ start of line; optional emoji; optional spaces; optional **; label; optional **; end of line
-    header = rf"^\s*(?:[🏷️📈🔍🛠📊💵🧱👥🚩🧪]\s*)?\**{re.escape(label)}\**\s*$"
-
-    # Capture everything after that header until the next header or end of text
-    pattern = rf"(?ims){header}\n+(.*?)(?=^\s*(?:[🏷️📈🔍🛠📊💵🧱👥🚩🧪]\s*)?\**(?:{next_headers})\**\s*$|\Z)"
-    m = re.search(pattern, text)
-    return m.group(1).strip() if m else "Unknown"
-
-
 def extract_revenue(traction_text: str) -> str:
     patterns = [
         r"\$[0-9][0-9,\.]*\s*[kKmM]?\s*(?:ARR|MRR|annual|monthly)?",  # $450K ARR, $20k MRR, $1.2M
@@ -387,6 +366,121 @@ def strip_greeting(mini: str) -> str:
     m = re.search(r"(?is)\A.*?Hi GP,?\s*", mini)
     return mini[m.end():].lstrip() if m else mini.strip()
 
+# Accept common variations of section headers
+# Aliases (keep these above)
+SECTION_ALIASES = {
+    "Startup Overview": ["Startup Overview", "Overview"],
+    "Market": ["Market", "Market Opportunity", "Addressable Market", "TAM", "Market Size"],
+    "Problem": ["Problem", "Pain", "Problem & Solution"],
+    "Solution": ["Solution", "Product", "What We Do"],
+    "Traction": ["Traction", "Traction & Milestones", "Revenue, Contracts & Pipeline",
+                 "Revenue & Pipeline", "Revenue", "Milestones"],
+    "Business Model": ["Business Model", "Biz Model", "Monetization", "Pricing"],
+    "Moat / Defensibility": ["Moat / Defensibility", "Moat", "Defensibility", "Unfair Advantage"],
+    "Team": ["Team", "Founders", "Founders, Team, and Advisors", "Team & Advisors", "Leadership"],
+    "Red Flags / Risks": ["Red Flags / Risks", "Risks", "Risk"],
+    "Product Stage": ["Product Stage", "Stage"],
+}
+
+ALL_HEADERS = sorted({h for k, vs in SECTION_ALIASES.items() for h in ([k] + vs)},
+                     key=len, reverse=True)
+
+def extract_field(label: str, text: str) -> str:
+    """
+    Find the block after a header matching `label` or any alias, until the next known header.
+    Handles optional emoji and **bold** in headings.
+    """
+    labels = SECTION_ALIASES.get(label, [label])
+
+    # Build the alternations for CURRENT header and for the lookahead to the NEXT header
+    label_re = "(?:" + "|".join(re.escape(x) for x in labels) + ")"
+    next_re  = "(?:" + "|".join(re.escape(x) for x in ALL_HEADERS) + ")"
+
+    # A header line: optional emoji/symbol, optional spaces, optional **bold**
+    header = rf"^\s*(?:[🏷️📈🔍🛠📊💵🧱👥🚩🧪]\s*)?\**{label_re}\**\s*$"
+
+    # Capture everything after that header until the next header or end of text
+    pattern = rf"(?ims){header}\n+(.*?)(?=^\s*(?:[🏷️📈🔍🛠📊💵🧱👥🚩🧪]\s*)?\**(?:{next_re})\**\s*$|\Z)"
+
+    m = re.search(pattern, text)
+    return m.group(1).strip() if m else "Unknown"
+
+def extract_field(label: str, text: str) -> str:
+    """
+    Extract the block after a header that matches `label` or any of its aliases.
+    Emoji and **bold** are optional; match until the next known header or end of text.
+    """
+    labels = SECTION_ALIASES.get(label, [label])
+    label_re = "|".join(re.escape(x) for x in labels)
+    next_re  = "|".join(re.escape(x) for x in ALL_HEADERS)
+    # optional emoji/symbols at start, optional **bold**
+    header = rf"^\s*(?:[🏷️📈🔍🛠📊💵🧱👥🚩🧪]\s*)?\**{re.escape(label)}\**\s*$"
+    pattern = rf"(?ims){header}\n+(.*?)(?=^\s*(?:[🏷️📈🔍🛠📊💵🧱👥🚩🧪]\s*)?\**(?:{next_headers})\**\s*$|\Z)"
+    m = re.search(pattern, text)
+    return m.group(1).strip() if m else "Unknown"
+
+# --- TAGGING ---------------------------------------------------------------
+# --- Auto-tagging -----------------------------------------------------------
+TAG_RULES = [
+    (r"\bvisa|passport|immigration|e[- ]?visa|airline|ota\b",            "TravelTech"),
+    (r"\bgeospatial|earth ?observation|satellite|sar\b",                 "Geospatial"),
+    (r"\bspace[- ]?(force|domain|tech)|orbit|ssa\b",                     "SpaceTech"),
+    (r"\bdefen[cs]e|dod|usaf|us space force|nato|militar(y|ies)\b",      "DefenseTech"),
+    (r"\bgovernment|public sector|procure(ment)?\b",                     "GovTech"),
+    (r"\bcompliance|regulator(y|ies)|soc[- ]?2|iso ?27001|dpa\b",        "RegTech"),
+    (r"\bbiometric|facial recognition|face match\b",                     "Biometrics"),
+    (r"\brpa\b|\bautomation|workflow\b",                                 "Automation"),
+    (r"\bcomputer vision|object detection|imag(e|ing)\b",                "Computer Vision"),
+    (r"\bnlp|llm|language model|gpt\b",                                  "NLP"),
+    (r"\bapi\b",                                                         "API"),
+    (r"\bsaas|subscription|per[- ]?(seat|user)\b",                        "SaaS"),
+    (r"\bb2g\b|agency\b|contract\b",                                     "B2G"),
+    (r"\bb2b2c\b",                                                       "B2B2C"),
+    (r"\bb2b\b|enterprise\b",                                            "B2B"),
+    (r"\bf(in|)tech|payment|invoice|billing\b",                          "FinTech"),
+    (r"\binsurtech|insurance\b",                                         "InsurTech"),
+    (r"\bhealthtech|patient|hospital|clinical\b",                        "HealthTech"),
+]
+
+def infer_tags(
+    mini_memo: str,
+    info: "StartupInfo",
+    extra: Optional[Dict[str, Any]] = None,
+    max_tags: int = 8,
+) -> List[str]:
+    """Heuristic tags from the memo + context."""
+    text = " ".join(filter(None, [
+        mini_memo,
+        getattr(info, "product", ""),
+        getattr(info, "investors", ""),
+        (extra or {}).get("market", "")
+    ])).lower()
+
+    tags: List[str] = []
+
+    # universal AI detection
+    if re.search(r"\b(ai|machine learning|ml|deep learning)\b", text):
+        tags.append("AI")
+
+    # rule-based tags
+    for pattern, tag in TAG_RULES:
+        if re.search(pattern, text, re.IGNORECASE):
+            tags.append(tag)
+
+    # stage tag (optional)
+    if getattr(info, "round", ""):
+        tags.append(info.round.strip().title())
+
+    # dedupe & cap
+    seen = set()
+    uniq: List[str] = []
+    for t in tags:
+        if t not in seen:
+            uniq.append(t); seen.add(t)
+    return uniq[:max_tags]
+
+
+
 def process_deal(name: str, email_to, prompt: str):
     full_output = build_memo_with_assistant(prompt)
 
@@ -457,7 +551,31 @@ def process_deal(name: str, email_to, prompt: str):
     traction = extract_field("Traction", mini_memo)
     team     = extract_field("Team", mini_memo)
     revenue  = extract_revenue(traction)
-    tags     = "AI SaaS, Automation"
+
+    round_str = info_round_from_prompt(prompt)
+    tags_list = infer_tags(
+    mini_memo,
+    product="",        # if you have this handy, pass it
+    investors="",      # same here
+    market="",         # or pass extra_context['market'] if you thread it through
+    round_str=round_str,
+    )
+    tags = ", ".join(tags_list) if tags_list else "AI"
+
+
+
+    # If the model used a different header, try common alternates explicitly
+    if traction == "Unknown":
+        traction = extract_field("Revenue, Contracts & Pipeline", mini_memo)  # alias handled too
+
+    # If we still couldn't find explicit revenue, search the whole memo
+    if revenue == "Unknown":
+        revenue = extract_revenue(mini_memo)
+
+    if team == "Unknown":
+        team = extract_field("Founders", mini_memo)  # covered by aliases
+
+
 
     # Parse scorecard from mini or full, then calibrate
     scorecard = parse_score_any(mini_memo, full_memo) or {"scores": {}}
