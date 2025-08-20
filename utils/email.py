@@ -8,6 +8,18 @@ from google.oauth2.credentials import Credentials
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.send']
 
+
+def _load_creds(token_path: str | None):
+    blob = os.getenv("GOOGLE_OAUTH_TOKEN_JSON")
+    if blob:
+        print("GMAIL TOKEN SOURCE=ENV", flush=True)
+        return Credentials.from_authorized_user_info(json.loads(blob), SCOPES)
+    if token_path and os.path.exists(token_path):
+        print(f"GMAIL TOKEN SOURCE=FILE {token_path}", flush=True)
+        return Credentials.from_authorized_user_file(token_path, SCOPES)
+    raise RuntimeError("No Gmail token found. Set GOOGLE_OAUTH_TOKEN_JSON or provide a token file.")
+
+
 def _to_list(v: Union[str, List[str], None]) -> List[str]:
     if not v:
         return []
