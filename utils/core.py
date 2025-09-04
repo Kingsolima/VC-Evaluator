@@ -2,6 +2,7 @@ from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import time
 from openai import OpenAI
+from memo_schema import MemoPayload
 import re
 from utils.config import (
     OPENAI_API_KEY, OPENAI_ASSISTANT_ID, GOOGLE_TOKEN_PATH,
@@ -91,6 +92,7 @@ Here is a full mini memo for {info.name}, {info.product}. They are currently rai
 
 📈 **Market**
 {market}
+{competition}
 
 🔍 **Problem**
 {problem}
@@ -109,6 +111,7 @@ Here is a full mini memo for {info.name}, {info.product}. They are currently rai
 
 👥 **Team**
 {team_detail}
+{university} -> Also try to get their experience and previous companies
 
 🚩 **Red Flags / Risks**
 {extra.get("risks", "")}
@@ -118,31 +121,61 @@ Here is a full mini memo for {info.name}, {info.product}. They are currently rai
 
 📊 📊 **Scorecard (computed)**
 Compute scores using this rubric (max points):
-- Team 0–25
-- Market 0–20
-- Product 0–10
-- Vision 0–5
-- Traction 0–10
-- Business Model 0–5
-- Moat 0–25
-- Risk Adjustment 0 to -10 (if their isnt much risk dont adjust much, like 10 is for extreme cases)
-- Bonus 0…+5
+- Team 0-25
+    - Founders/CEO/CTO/VP of Engineering (0-15)
 
+        - 12-15: Top-decile track record in relevant scenarios; elite recruiting magnet; shipped/operated at scale; excellent commercial instincts.
+        - 9-11: Strong/top-quartile performance or senior leadership roles in related domains.
+        - 4-8: Success in less-relevant roles; partial proof.
+        - 0-3: Limited evidence for success in this context.
+    - Executive Team (non founders) (0-10)
+        - 8-10: Complementary skills (product, eng, sales, ops, finance), prior scale experience, referenceable wins, velocity.
+        - 4-7: Good but with gaps to fill.
+        - 0-3: Thin bench, single-threaded, or heavy contractor reliance. Or any serious leadership risk
+- Market 0-20
+    - 16-20 for a company that has secured paying customers, or rapid customer adoption. The market is large (in the billions) and growing.
+    - 9-15 Company is in testing and in beta/non paying customers/or paid pilots. The market is large (in the billions) and growing.
+    - 0-8 company has little to no customer feedback. Or the market is small (in the millions) and not growing fast enough.
+- Traction 0-20
+    - 14-20 for a company that has made significant progress given the amount of capital raised to date in traction, such as a large user base, high engagement, or high revenue.
+    - 8-13 for a company that has moderate progress given the amount of capital raised to date in traction,, such as a growing user base, moderate engagement, or moderate revenue.
+    - 0-7 for a company that has weak little progress given the amount of capital raised to date in traction, such as a small user base, low engagement, or low revenue.
+- Business Model 0-10
+    - 8-10 for a company that has unit economics and high scalability.
+    - 4-7 for a company that has unit economics but questioable scalability (or vice versa).
+    - 0-3 for a company that has questionable unit economics and scalability.
+- Moat 0-25
+    - 20-25 for a company that has a strong moat, such as a proprietary technology, technical complexity, IP, regulations, strong brand, or network effects.
+    - 15-20 for a company that has average, moderate defensability, competitors can enter market but gaining traction is relatively expensive or time intensive.
+    - 10-15 for a company that has a weak moat, such as a commodity product, low technical complexity, no IP, no regulations, no strong brand, or no network effects. And competitors can easily enter the market wihout much effort, time, or cost.
+    - 0-10 for a company that has no moat, such as a commodity product, low technical complexity, no IP, no regulations, no strong brand, or no network effects.
+- Risk Adjustment 0 to -15 (if their isnt much risk dont adjust much, like 10 is for extreme cases)
+    - Some reasons to adjust down:
+        - The company is in a highly regulated industry.
+        - The startup's main product can be just a feature in large companies. For example, Fetii is a rideshare app that allows riders to get vans so large groups can travel together, but this is something that Uber or Lyft can easily accomplish as a feature.
+        - The startup has a low moat and low traction.
+        - The founders have limited experience in the industry.
+        - The founders are old (50+).
+
+- Bonus 0 to +10
+    - +5 to +10 for a strong moat but very early stage and low traction. Like Starcloud who is build data centres in space but hasnt made any revenue yet.
+    - 0 to +5 is up to the evaluator to decide.
 Rules:
 - Total = sum(all above) bounded to 0…100.
 - Verdict mapping:
-  - total ≥ 80 → "TAKE_CALL"
-  - 70–79 → "LEARN_MORE"
+  - total ≥ 80 → "TAKE A CALL"
+  - 70-79 → "LEARN MORE"
   - 50-70 → "PASS"
 
-After the email text, output ONE json code block and nothing else for scoring.
+After the email text, output ONE and only ONE ```json code block that matches this schema (all keys present, even if "N/A"):
+{ MemoPayload }
 
 Do not include any markdown/table/bullet scorecard in the email body.
 After the email text, output ONE json code block ONLY for scoring.
 
 Allowed verdicts: TAKE_CALL, LEARN_MORE, PASS.
 
-```json
+```json -> ### Make it look like a table ###
 {{"scores": {{"team": 0, "market": 0, "product": 0, "vision": 0, "traction": 0, "business_model": 0, "moat": 0, "risk_adj": 0, "bonus": 0}}, "total": 0, "verdict": "LEARN_MORE"}}
 
 
@@ -168,8 +201,12 @@ Structure:
 - **Competitors**
 - **The Team**
 - **The Cap Table**
+**{cap_table}**
 - **Exit Strategy**
+{vision}
+{milestones}
 - **Press**
+{press_links}
 
 Use bold headers, markdown formatting, and professional tone. Include data.
 """
@@ -218,7 +255,7 @@ def extract_action(text: str) -> str:
             "TAKE_CALL": "📞 Take a Call",
             "LEARN_MORE": "⚖️ Learn More",
             "PASS": "❌ Pass",
-            "HARD_PASS": "❌ Pass",  # in case the model outputs it
+            "HARD_PASS": "❌ Hard Pass",  # in case the model outputs it
         }
         return mapping.get(v, "N/A")
     for phrase in ["📞 Take a Call", "⚖️ Learn More", "❌ Pass"]:
