@@ -27,7 +27,19 @@ class StartupInfo(BaseModel):
     traction: str
     team: str
     product: str
-    email_to: str  # keep for backward-compat; we can still add a 2nd GP below
+    email_to: str  # keep for backward-compat; we can still add a 2nd GP below  
+    # NEW: Add these fields for detailed team backgrounds
+    founder_1_name: Optional[str] = ""
+    founder_1_background: Optional[str] = ""
+    founder_1_linkedin: Optional[str] = ""
+    
+    founder_2_name: Optional[str] = ""
+    founder_2_background: Optional[str] = ""
+    founder_2_linkedin: Optional[str] = ""
+    
+    founder_3_name: Optional[str] = ""
+    founder_3_background: Optional[str] = ""
+    founder_3_linkedin: Optional[str] = ""
 
 def build_memo_with_assistant(prompt: str) -> str:
     thread = client.beta.threads.create()
@@ -48,7 +60,7 @@ def build_memo_with_assistant(prompt: str) -> str:
 def _build_prompt(info: StartupInfo, extra: Optional[Dict[str, Any]]) -> str:
     extra = extra or {}
 
-    # Pull all fields
+    # Pull all existing fields
     first_name  = extra.get("first_name", "")
     last_name   = extra.get("last_name", "")
     founder_em  = extra.get("founder_email", "")
@@ -68,6 +80,46 @@ def _build_prompt(info: StartupInfo, extra: Optional[Dict[str, Any]]) -> str:
     press_links = extra.get("press_links", "")
     round_size = extra.get("round_size", "")
     industry = extra.get("industry", "")
+
+    # NEW: Build comprehensive team background section
+    team_backgrounds = []
+    
+    # Founder 1
+    if getattr(info, 'founder_1_name', ''):
+        founder_1_section = f"""
+**{info.founder_1_name}**
+Background: {getattr(info, 'founder_1_background', 'No background provided')}
+LinkedIn: {getattr(info, 'founder_1_linkedin', 'Not provided')}
+"""
+        team_backgrounds.append(founder_1_section.strip())
+    
+    # Founder 2
+    if getattr(info, 'founder_2_name', ''):
+        founder_2_section = f"""
+**{info.founder_2_name}**
+Background: {getattr(info, 'founder_2_background', 'No background provided')}
+LinkedIn: {getattr(info, 'founder_2_linkedin', 'Not provided')}
+"""
+        team_backgrounds.append(founder_2_section.strip())
+    
+    # Founder 3
+    if getattr(info, 'founder_3_name', ''):
+        founder_3_section = f"""
+**{info.founder_3_name}**
+Background: {getattr(info, 'founder_3_background', 'No background provided')}
+LinkedIn: {getattr(info, 'founder_3_linkedin', 'Not provided')}
+"""
+        team_backgrounds.append(founder_3_section.strip())
+
+    # Combine original team info with detailed backgrounds
+    detailed_team_section = f"""
+{team_detail}
+
+**Founder Details:**
+{chr(10).join(team_backgrounds) if team_backgrounds else 'No detailed founder backgrounds provided'}
+
+{university}
+"""
 
     return f"""
 You are a venture capital associate writing two outputs:
@@ -110,8 +162,26 @@ Here is a full mini memo for {info.name}, {info.product}. They are currently rai
 {extra.get("moat", "")}
 
 👥 **Team**
-{team_detail}
-{university} -> Also try to get their experience and previous companies
+{detailed_team_section}
+
+**Team Evaluation Instructions:**
+When scoring the team section (0-25 points), carefully analyze the founder backgrounds provided above. Consider:
+
+**Founders/CEO/CTO (0-15 points):**
+- Previous startup experience and exits
+- Industry domain expertise and years of experience  
+- Technical skills relevant to the product
+- Leadership roles and team management experience
+- Educational background from relevant institutions
+- Track record of shipping products or growing businesses
+
+**Executive Team (0-10 points):**
+- Complementary skills across product, engineering, sales, operations
+- Prior experience at scale-stage companies
+- Referenceable wins and achievements
+- Hiring velocity and team-building capability
+
+Use the LinkedIn profiles provided to verify and supplement the background information.
 
 🚩 **Red Flags / Risks**
 {extra.get("risks", "")}
@@ -123,7 +193,6 @@ Here is a full mini memo for {info.name}, {info.product}. They are currently rai
 Compute scores using this rubric (max points):
 - Team 0-25
     - Founders/CEO/CTO/VP of Engineering (0-15)
-
         - 12-15: Top-decile track record in relevant scenarios; elite recruiting magnet; shipped/operated at scale; excellent commercial instincts.
         - 9-11: Strong/top-quartile performance or senior leadership roles in related domains.
         - 4-8: Success in less-relevant roles; partial proof.
@@ -132,23 +201,28 @@ Compute scores using this rubric (max points):
         - 8-10: Complementary skills (product, eng, sales, ops, finance), prior scale experience, referenceable wins, velocity.
         - 4-7: Good but with gaps to fill.
         - 0-3: Thin bench, single-threaded, or heavy contractor reliance. Or any serious leadership risk
+
 - Market 0-20
     - 16-20 for a company that has secured paying customers, or rapid customer adoption. The market is large (in the billions) and growing.
     - 9-15 Company is in testing and in beta/non paying customers/or paid pilots. The market is large (in the billions) and growing.
     - 0-8 company has little to no customer feedback. Or the market is small (in the millions) and not growing fast enough.
+
 - Traction 0-20
     - 14-20 for a company that has made significant progress given the amount of capital raised to date in traction, such as a large user base, high engagement, or high revenue.
     - 8-13 for a company that has moderate progress given the amount of capital raised to date in traction,, such as a growing user base, moderate engagement, or moderate revenue.
     - 0-7 for a company that has weak little progress given the amount of capital raised to date in traction, such as a small user base, low engagement, or low revenue.
+
 - Business Model 0-10
     - 8-10 for a company that has unit economics and high scalability.
     - 4-7 for a company that has unit economics but questioable scalability (or vice versa).
     - 0-3 for a company that has questionable unit economics and scalability.
+
 - Moat 0-25
     - 20-25 for a company that has a strong moat, such as a proprietary technology, technical complexity, IP, regulations, strong brand, or network effects.
     - 15-20 for a company that has average, moderate defensability, competitors can enter market but gaining traction is relatively expensive or time intensive.
     - 10-15 for a company that has a weak moat, such as a commodity product, low technical complexity, no IP, no regulations, no strong brand, or no network effects. And competitors can easily enter the market wihout much effort, time, or cost.
     - 0-10 for a company that has no moat, such as a commodity product, low technical complexity, no IP, no regulations, no strong brand, or no network effects.
+
 - Risk Adjustment 0 to -15 (if their isnt much risk dont adjust much, like 10 is for extreme cases)
     - Some reasons to adjust down:
         - The company is in a highly regulated industry.
@@ -160,6 +234,7 @@ Compute scores using this rubric (max points):
 - Bonus 0 to +10
     - +5 to +10 for a strong moat but very early stage and low traction. Like Starcloud who is build data centres in space but hasnt made any revenue yet.
     - 0 to +5 is up to the evaluator to decide.
+
 Rules:
 - Total = sum(all above) bounded to 0…100.
 - Verdict mapping:
@@ -168,16 +243,15 @@ Rules:
   - 50-70 → "PASS"
 
 After the email text, output ONE and only ONE ```json code block that matches this schema (all keys present, even if "N/A"):
-{ MemoPayload }
 
 Do not include any markdown/table/bullet scorecard in the email body.
 After the email text, output ONE json code block ONLY for scoring.
 
 Allowed verdicts: TAKE_CALL, LEARN_MORE, PASS.
 
-```json -> ### Make it look like a table ###
+```json
 {{"scores": {{"team": 0, "market": 0, "product": 0, "vision": 0, "traction": 0, "business_model": 0, "moat": 0, "risk_adj": 0, "bonus": 0}}, "total": 0, "verdict": "LEARN_MORE"}}
-
+```
 
 Best,  
 VC Evaluator GPT
@@ -186,31 +260,86 @@ VC Evaluator GPT
 
 ### FULL DEAL MEMO
 
-Now write a long-form PDF memo using the same info in the style of Replit's Series C investment memo.
+Now write a long-form PDF memo using the same info in the style of institutional VC standards.
 
-Structure:
-- We are excited to invest...
-- Why we're excited...
-- **Synopsis**
-- **Problem**
-- **Solution**
-- **Business Model**
-- **Market Size**
-- **Go to Market Strategy**
-- **Traction**
-- **Competitors**
-- **The Team**
-- **The Cap Table**
-**{cap_table}**
-- **Exit Strategy**
-{vision}
-{milestones}
-- **Press**
-{press_links}
+### COMPREHENSIVE INVESTMENT MEMO
 
-Use bold headers, markdown formatting, and professional tone. Include data.
+Write a detailed 8-10 page investment memo following institutional VC standards:
+
+**EXECUTIVE SUMMARY**
+- Investment recommendation and key metrics upfront
+- 3-4 bullet points on investment highlights
+- Risk summary
+
+**INVESTMENT THESIS** 
+- Why we're excited (2-3 paragraphs)
+- What we like (3 specific points with evidence)  
+- Key risks (3 specific concerns)
+
+**COMPANY ANALYSIS**
+- Problem (market pain, current solutions' failures)
+- Solution (detailed product description, differentiation)
+- Business model with unit economics table
+- Market analysis with TAM/SAM/SOM breakdown
+- Go-to-market strategy
+
+**TRACTION & PERFORMANCE**
+- Financial metrics table (ARR, MRR, customers, growth rates)
+- KPIs (NRR, churn, CAC, LTV, payback period)
+- Recent milestones with dates
+
+**COMPETITIVE LANDSCAPE**  
+- Direct competitors comparison table
+- Competitive positioning and moats
+- Switching costs and defensibility
+
+**TEAM ASSESSMENT**
+Use the detailed founder backgrounds provided above to create comprehensive profiles:
+- Founder backgrounds with specific experience and achievements
+- Relevance of their experience to current venture
+- Educational credentials and network
+- Previous company exits or significant milestones
+- Technical expertise alignment with product needs
+- Advisory board and existing investors
+- Team gaps and hiring plans
+
+**FINANCIAL ANALYSIS**
+- Funding history table
+- Use of funds breakdown  
+- 3-year financial projections
+- Path to profitability
+
+Use professional formatting, data tables, and quantitative analysis throughout.
 """
 
+def enhance_team_scoring_context(info: StartupInfo) -> str:
+    """
+    Create additional context for GPT team scoring based on founder backgrounds
+    """
+    scoring_context = []
+    
+    founders = [
+        (getattr(info, 'founder_1_name', ''), getattr(info, 'founder_1_background', '')),
+        (getattr(info, 'founder_2_name', ''), getattr(info, 'founder_2_background', '')),
+        (getattr(info, 'founder_3_name', ''), getattr(info, 'founder_3_background', ''))
+    ]
+    
+    for name, background in founders:
+        if name and background:
+            # Look for key experience indicators
+            experience_signals = {
+                'startup_experience': any(term in background.lower() for term in ['startup', 'founded', 'co-founder', 'exit', 'acquired']),
+                'technical_experience': any(term in background.lower() for term in ['engineer', 'cto', 'developer', 'technical', 'software']),
+                'leadership_experience': any(term in background.lower() for term in ['ceo', 'vp', 'director', 'head of', 'led team']),
+                'industry_relevance': True  # This would need domain-specific logic
+            }
+            
+            context = f"{name}: "
+            context += ", ".join([k.replace('_', ' ') for k, v in experience_signals.items() if v])
+            scoring_context.append(context)
+    
+    return "; ".join(scoring_context) if scoring_context else "Limited founder background information provided"
+    
 def parse_scorecard_json(text: str) -> Optional[Dict[str, Any]]:
     # look for the last fenced JSON block
     m = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
