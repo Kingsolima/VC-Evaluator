@@ -58,9 +58,6 @@ def send_email_oauth(
         {mini_memo.replace('\n', '<br>')}
         <br><br>
         📎 Full PDF memo attached.<br>
-        <br>
-        Best,<br>
-        VC Evaluator GPT
     </body>
     </html>
     """
