@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional
 from openai import OpenAI
 
 # Import models and utilities from refactored modules
-from memo_schema import StartupInfo
+from utils.memo_schema import StartupInfo
 from utils.prompt_builder import build_investment_memo_prompt
 from utils.scoring_engine import parse_score_any, calibrate_scorecard, build_decision_rationale
 from field_map import extract_field, extract_revenue, extract_summary, infer_tags
